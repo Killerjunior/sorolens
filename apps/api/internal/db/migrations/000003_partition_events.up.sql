@@ -20,6 +20,12 @@ BEGIN
     -- Rename the original table so we can recreate it as partitioned.
     ALTER TABLE events RENAME TO events_old;
 
+    -- PostgreSQL preserves indexes when a table is renamed. Drop the old
+    -- indexes before recreating them on the partitioned parent table.
+    DROP INDEX IF EXISTS idx_events_contract_ledger;
+    DROP INDEX IF EXISTS idx_events_tx_hash;
+    DROP INDEX IF EXISTS idx_events_ledger_closed_at;
+
     -- Create the partitioned table with the same columns.
     -- Primary key must include the partition key (ledger_closed_at).
     CREATE TABLE events (
