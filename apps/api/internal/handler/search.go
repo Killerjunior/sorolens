@@ -41,5 +41,5 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 			FunctionName: result.FunctionName,
 		})
 	}
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusOK, map[string]any{"items": response})
 }
