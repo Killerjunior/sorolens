@@ -39,7 +39,7 @@ type Store interface {
 	ListContracts(ctx context.Context, cursor string, limit int, f ContractFilters) ([]Contract, string, error)
 	SearchContracts(ctx context.Context, query string, limit int) ([]Contract, error)
 
-	// BatchInsertEvents inserts events, ignoring duplicates by primary key.
+	// BatchInsertEvents inserts events, ignoring rows that conflict with a unique constraint.
 	// All rows are sent in a single network round-trip.
 	BatchInsertEvents(ctx context.Context, events []Event) error
 

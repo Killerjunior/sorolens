@@ -149,7 +149,7 @@ func networkOrDefault(network string) string {
 	return network
 }
 
-// BatchInsertEvents inserts multiple events in a single batch operation. It ignores duplicate events based on the primary key (id).
+// BatchInsertEvents inserts multiple events in a single batch operation and ignores rows that conflict with an available unique constraint.
 func (s *postgresStore) BatchInsertEvents(ctx context.Context, events []Event) error {
 	if len(events) == 0 {
 		return nil
@@ -169,7 +169,7 @@ func (s *postgresStore) BatchInsertEvents(ctx context.Context, events []Event) e
 				 topic_xdr, value_xdr, topic_decoded, value_decoded,
 				 in_successful_call, inserted_at)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-			ON CONFLICT (id) DO NOTHING`,
+			ON CONFLICT DO NOTHING`,
 			e.ID, e.ContractID, networkOrDefault(e.Network), e.Ledger, e.LedgerClosedAt, e.TxHash, e.Type,
 			topicJSON, e.ValueXDR, topicDecJSON, valDecJSON,
 			e.InSuccessfulCall, time.Now(),
