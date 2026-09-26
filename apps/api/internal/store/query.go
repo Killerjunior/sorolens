@@ -21,6 +21,8 @@ type FullStore interface {
 	ArchiveStore
 	WatchdogStore
 	ContractUpgradeStore
+	ContractSpecStore
+	ContractTagStore
 	HealthScoreStore
 	APIKeyStore
 	AlertSubscriptionStore
@@ -28,6 +30,7 @@ type FullStore interface {
 	WatchlistStore
 	UserStore
 	PerformanceStore
+	ContractWasmStore
 	GlobalEventStore
 	LabelStore
 	FailedEventStore

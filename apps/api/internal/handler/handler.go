@@ -18,6 +18,8 @@ type APIStore interface {
 	store.ArchiveStore
 	store.WatchdogStore
 	store.ContractUpgradeStore
+	store.ContractSpecStore
+	store.ContractTagStore
 	store.HealthScoreStore
 	store.APIKeyStore
 	store.AlertSubscriptionStore
@@ -25,6 +27,7 @@ type APIStore interface {
 	store.WatchlistStore
 	store.UserStore
 	store.PerformanceStore
+	store.ContractWasmStore
 	store.FailedEventStore
 	store.GlobalEventStore
 	store.LabelStore

@@ -27,7 +27,10 @@ type fakeRPC struct {
 	ledgerEntries map[string]LedgerEntry // key: base64 LedgerKey
 	txErr         error
 	eventsCalls   []getEventsCall
-	onGetEvents   func()
+	// onGetEvents, when set, runs after each GetEvents call has released the
+	// lock. Tests use it to simulate RPC latency and measure how many calls
+	// overlap (see the contract-processing concurrency test).
+	onGetEvents func()
 }
 
 type getEventsCall struct {
@@ -56,18 +59,22 @@ func (f *fakeRPC) GetEvents(_ context.Context, start, end uint32, filters []Even
 	if len(filters) > 0 && len(filters[0].ContractIDs) > 0 {
 		key = filters[0].ContractIDs[0]
 	}
+	var res *GetEventsResult
 	if r, ok := f.events[key]; ok {
-		f.mu.Unlock()
-		if onGetEvents != nil {
-			onGetEvents()
-		}
-		return r, nil
+		res = r
+	} else {
+		res = &GetEventsResult{LatestLedger: 500000}
 	}
+	onGetEvents := f.onGetEvents
 	f.mu.Unlock()
+
+	// Run the hook with the lock released so concurrent GetEvents calls can
+	// actually overlap; otherwise the simulated latency would serialize them
+	// and the concurrency test could never observe more than one in flight.
 	if onGetEvents != nil {
 		onGetEvents()
 	}
-	return &GetEventsResult{LatestLedger: 500000}, nil
+	return res, nil
 }
 
 func (f *fakeRPC) GetTransaction(_ context.Context, hash string) (*TransactionResult, error) {
@@ -101,27 +108,32 @@ func (f *fakeRPC) GetLedgerEntries(_ context.Context, keys []string) (*GetLedger
 // ---- fake Store -----------------------------------------------------------
 
 type fakeStore struct {
-	mu             sync.Mutex
-	contracts      []Contract
-	syncStates     map[string]SyncState
-	events         []Event
-	invocations    []Invocation
-	upgrades       []ContractUpgrade
-	wasmHashes     map[string]string
-	syncErr        error
-	listErr        error
-	hourly         map[string][]HourlyActivity // contractID -> buckets
-	alerts         []Alert
-	insertErr      error
-	healthInputs   map[string]HealthInputs // contractID -> inputs
-	healthScores   []ContractHealthScore
-	failedEvents   []FailedEvent
+	mu           sync.Mutex
+	contracts    []Contract
+	syncStates   map[string]SyncState
+	events       []Event
+	invocations  []Invocation
+	upgrades     []ContractUpgrade
+	wasmHashes   map[string]string
+	syncErr      error
+	listErr      error
+	hourly       map[string][]HourlyActivity // contractID -> buckets
+	alerts       []Alert
+	insertErr    error
+	healthInputs map[string]HealthInputs // contractID -> inputs
+	healthScores []ContractHealthScore
+	failedEvents []FailedEvent
+	// indexerCursors maps network -> last committed ledger (the indexer
+	// cursor) shared by Get/SetIndexerCursor and BatchInsertWithCursor.
 	indexerCursors map[string]uint32
 	// eventInsertErrs maps event ID -> error returned by BatchInsertEvents.
 	// Used to simulate deliberately bad events for the DLQ path (issue #202).
 	eventInsertErrs map[string]error
 	// eventInsertFailTimes maps event ID -> remaining failures before success.
 	eventInsertFailTimes map[string]int
+	// wasmBinaries is the content-addressed Wasm cache (issue #162):
+	// wasm hash -> raw bytes.
+	wasmBinaries map[string][]byte
 }
 
 func newFakeStore(contracts []Contract) *fakeStore {
@@ -130,6 +142,7 @@ func newFakeStore(contracts []Contract) *fakeStore {
 		syncStates:     make(map[string]SyncState),
 		hourly:         make(map[string][]HourlyActivity),
 		wasmHashes:     make(map[string]string),
+		wasmBinaries:   make(map[string][]byte),
 		healthInputs:   make(map[string]HealthInputs),
 		indexerCursors: make(map[string]uint32),
 	}
@@ -211,6 +224,9 @@ func (f *fakeStore) GetIndexerCursor(_ context.Context, network string) (uint32,
 func (f *fakeStore) SetIndexerCursor(_ context.Context, network string, ledger uint32) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.indexerCursors == nil {
+		f.indexerCursors = make(map[string]uint32)
+	}
 	if ledger > f.indexerCursors[network] {
 		f.indexerCursors[network] = ledger
 	}
@@ -227,6 +243,9 @@ func (f *fakeStore) BatchInsertWithCursor(ctx context.Context, network string, l
 	f.invocations = append(f.invocations, invocations...)
 	if syncState.ContractID != "" {
 		f.syncStates[syncState.ContractID] = syncState
+	}
+	if f.indexerCursors == nil {
+		f.indexerCursors = make(map[string]uint32)
 	}
 	if ledger > f.indexerCursors[network] {
 		f.indexerCursors[network] = ledger
@@ -260,6 +279,24 @@ func (f *fakeStore) UpdateContractWasmHash(_ context.Context, contractID, wasmHa
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.wasmHashes[contractID] = wasmHash
+	return nil
+}
+
+// HasContractWasm and UpsertContractWasm back the content-addressed Wasm
+// cache that cacheWasmBinary fills (issue #162).
+func (f *fakeStore) HasContractWasm(_ context.Context, wasmHash string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.wasmBinaries[wasmHash]
+	return ok, nil
+}
+
+func (f *fakeStore) UpsertContractWasm(_ context.Context, wasmHash string, code []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.wasmBinaries[wasmHash]; !ok {
+		f.wasmBinaries[wasmHash] = append([]byte(nil), code...)
+	}
 	return nil
 }
 
@@ -822,6 +859,63 @@ func instanceKeyXDR(contractIDHex string) string {
 		panic(err)
 	}
 	return key
+}
+
+// buildCodeEntryXDR encodes a CONTRACT_CODE LedgerEntry carrying code, which
+// is what the RPC returns for wasm.ContractCodeKey(wasmHash).
+func buildCodeEntryXDR(wasmHashHex string, code []byte, lastModified uint32) string {
+	var out []byte
+	putU32 := func(v uint32) { out = binary.BigEndian.AppendUint32(out, v) }
+	putU32(lastModified)
+	putU32(7) // LedgerEntryType CONTRACT_CODE
+	putU32(0) // ContractCodeEntryExt V0
+	wasmHash, _ := hex.DecodeString(wasmHashHex)
+	out = append(out, wasmHash...)
+	putU32(uint32(len(code)))
+	out = append(out, code...)
+	out = append(out, make([]byte, (4-(len(code)%4))%4)...) // opaque padding
+	return base64.StdEncoding.EncodeToString(out)
+}
+
+// TestPoller_cachesWasmBinaryOnBaseline covers issue #162 at the indexer
+// boundary: the first poll that observes a contract's Wasm hash must fetch
+// the CONTRACT_CODE entry and persist the exact bytes.
+func TestPoller_cachesWasmBinaryOnBaseline(t *testing.T) {
+	t.Parallel()
+
+	contractID := "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
+	wasmHash := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	code := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
+
+	instanceKey := instanceKeyXDR(contractID)
+	codeKey, err := wasm.ContractCodeKey(wasmHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	st := newFakeStore([]Contract{{ID: contractID, Status: "active"}})
+	st.syncStates[contractID] = SyncState{ContractID: contractID, LastLedger: 499000}
+
+	rpc := &fakeRPC{
+		latestLedger: &LatestLedger{Sequence: 500000},
+		ledgerEntries: map[string]LedgerEntry{
+			instanceKey: {Key: instanceKey, XDR: buildInstanceEntryXDR(contractID, wasmHash, 501), LastModifiedLedgerSeq: 501},
+			codeKey:     {Key: codeKey, XDR: buildCodeEntryXDR(wasmHash, code, 501), LastModifiedLedgerSeq: 501},
+		},
+	}
+
+	p := New(rpc, st, newFakeRedis(), testConfig(), testLogger())
+	if err := p.Run(context.Background(), "once"); err != nil {
+		t.Fatalf("run once: %v", err)
+	}
+
+	got, ok := st.wasmBinaries[wasmHash]
+	if !ok {
+		t.Fatal("expected the wasm binary to be cached on baseline")
+	}
+	if string(got) != string(code) {
+		t.Errorf("cached code = %x, want %x", got, code)
+	}
 }
 
 func TestPoller_checksWasmHashBaseline(t *testing.T) {
