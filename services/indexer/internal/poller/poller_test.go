@@ -27,6 +27,7 @@ type fakeRPC struct {
 	ledgerEntries map[string]LedgerEntry // key: base64 LedgerKey
 	txErr         error
 	eventsCalls   []getEventsCall
+	onGetEvents   func()
 }
 
 type getEventsCall struct {
@@ -49,14 +50,22 @@ func (f *fakeRPC) GetLatestLedger(ctx context.Context) (*LatestLedger, error) {
 
 func (f *fakeRPC) GetEvents(_ context.Context, start, end uint32, filters []EventFilter) (*GetEventsResult, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.eventsCalls = append(f.eventsCalls, getEventsCall{start, end, filters})
+	onGetEvents := f.onGetEvents
 	key := ""
 	if len(filters) > 0 && len(filters[0].ContractIDs) > 0 {
 		key = filters[0].ContractIDs[0]
 	}
 	if r, ok := f.events[key]; ok {
+		f.mu.Unlock()
+		if onGetEvents != nil {
+			onGetEvents()
+		}
 		return r, nil
+	}
+	f.mu.Unlock()
+	if onGetEvents != nil {
+		onGetEvents()
 	}
 	return &GetEventsResult{LatestLedger: 500000}, nil
 }
@@ -92,21 +101,22 @@ func (f *fakeRPC) GetLedgerEntries(_ context.Context, keys []string) (*GetLedger
 // ---- fake Store -----------------------------------------------------------
 
 type fakeStore struct {
-	mu           sync.Mutex
-	contracts    []Contract
-	syncStates   map[string]SyncState
-	events       []Event
-	invocations  []Invocation
-	upgrades     []ContractUpgrade
-	wasmHashes   map[string]string
-	syncErr      error
-	listErr      error
-	hourly       map[string][]HourlyActivity // contractID -> buckets
-	alerts       []Alert
-	insertErr    error
-	healthInputs map[string]HealthInputs // contractID -> inputs
-	healthScores []ContractHealthScore
-	failedEvents []FailedEvent
+	mu             sync.Mutex
+	contracts      []Contract
+	syncStates     map[string]SyncState
+	events         []Event
+	invocations    []Invocation
+	upgrades       []ContractUpgrade
+	wasmHashes     map[string]string
+	syncErr        error
+	listErr        error
+	hourly         map[string][]HourlyActivity // contractID -> buckets
+	alerts         []Alert
+	insertErr      error
+	healthInputs   map[string]HealthInputs // contractID -> inputs
+	healthScores   []ContractHealthScore
+	failedEvents   []FailedEvent
+	indexerCursors map[string]uint32
 	// eventInsertErrs maps event ID -> error returned by BatchInsertEvents.
 	// Used to simulate deliberately bad events for the DLQ path (issue #202).
 	eventInsertErrs map[string]error
@@ -116,11 +126,12 @@ type fakeStore struct {
 
 func newFakeStore(contracts []Contract) *fakeStore {
 	return &fakeStore{
-		contracts:    contracts,
-		syncStates:   make(map[string]SyncState),
-		hourly:       make(map[string][]HourlyActivity),
-		wasmHashes:   make(map[string]string),
-		healthInputs: make(map[string]HealthInputs),
+		contracts:      contracts,
+		syncStates:     make(map[string]SyncState),
+		hourly:         make(map[string][]HourlyActivity),
+		wasmHashes:     make(map[string]string),
+		healthInputs:   make(map[string]HealthInputs),
+		indexerCursors: make(map[string]uint32),
 	}
 }
 
