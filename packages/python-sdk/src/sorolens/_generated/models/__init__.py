@@ -10,6 +10,11 @@ from .api_health_response_200 import ApiHealthResponse200
 from .api_health_response_200_db import ApiHealthResponse200Db
 from .api_health_response_200_redis import ApiHealthResponse200Redis
 from .api_key import APIKey
+from .batch_contracts_request import BatchContractsRequest
+from .batch_contracts_request_action import BatchContractsRequestAction
+from .batch_contracts_request_args import BatchContractsRequestArgs
+from .batch_contracts_result import BatchContractsResult
+from .batch_contracts_result_action import BatchContractsResultAction
 from .build_info import BuildInfo
 from .compare_contract_entry import CompareContractEntry
 from .compare_contract_entry_event_volume_item import (
@@ -41,6 +46,9 @@ from .contract_tag_request import ContractTagRequest
 from .contract_tags import ContractTags
 from .contract_upgrade import ContractUpgrade
 from .contract_validation_result import ContractValidationResult
+from .contract_verification import ContractVerification
+from .contract_verification_request import ContractVerificationRequest
+from .contract_verification_status import ContractVerificationStatus
 from .create_alert_subscription import CreateAlertSubscription
 from .create_alert_subscription_channel_type import CreateAlertSubscriptionChannelType
 from .create_alert_subscription_severity_filter import (
@@ -105,8 +113,10 @@ from .list_contract_storage_network import ListContractStorageNetwork
 from .list_contract_storage_response_200 import ListContractStorageResponse200
 from .list_contract_storage_status import ListContractStorageStatus
 from .list_contract_upgrades_response_200 import ListContractUpgradesResponse200
+from .list_contracts_dir import ListContractsDir
 from .list_contracts_network import ListContractsNetwork
 from .list_contracts_response_200 import ListContractsResponse200
+from .list_contracts_sort import ListContractsSort
 from .list_failed_events_response_200 import ListFailedEventsResponse200
 from .list_monitored_contracts_network import ListMonitoredContractsNetwork
 from .list_monitored_contracts_response_200 import ListMonitoredContractsResponse200
@@ -196,6 +206,14 @@ from .v2_watchlist_item import V2WatchlistItem
 from .v2_watchlist_list import V2WatchlistList
 from .v2_watchlist_status import V2WatchlistStatus
 from .validate_contract_body import ValidateContractBody
+from .verification_diagnostic import VerificationDiagnostic
+from .verification_diagnostic_severity import VerificationDiagnosticSeverity
+from .verification_expected_input import VerificationExpectedInput
+from .verification_source import VerificationSource
+from .verification_source_input import VerificationSourceInput
+from .verification_source_input_kind import VerificationSourceInputKind
+from .verification_source_kind import VerificationSourceKind
+from .verification_toolchain import VerificationToolchain
 from .watchdog_stats import WatchdogStats
 from .watchlist import Watchlist
 from .watchlist_item import WatchlistItem
@@ -211,6 +229,11 @@ __all__ = (
     "ApiHealthResponse200",
     "ApiHealthResponse200Db",
     "ApiHealthResponse200Redis",
+    "BatchContractsRequest",
+    "BatchContractsRequestAction",
+    "BatchContractsRequestArgs",
+    "BatchContractsResult",
+    "BatchContractsResultAction",
     "BuildInfo",
     "CompareContractEntry",
     "CompareContractEntryEventVolumeItem",
@@ -240,6 +263,9 @@ __all__ = (
     "ContractTags",
     "ContractUpgrade",
     "ContractValidationResult",
+    "ContractVerification",
+    "ContractVerificationRequest",
+    "ContractVerificationStatus",
     "CreateAlertSubscription",
     "CreateAlertSubscriptionChannelType",
     "CreateAlertSubscriptionSeverityFilter",
@@ -298,8 +324,10 @@ __all__ = (
     "ListContractStorageResponse200",
     "ListContractStorageStatus",
     "ListContractUpgradesResponse200",
+    "ListContractsDir",
     "ListContractsNetwork",
     "ListContractsResponse200",
+    "ListContractsSort",
     "ListFailedEventsResponse200",
     "ListMonitoredContractsNetwork",
     "ListMonitoredContractsResponse200",
@@ -389,6 +417,14 @@ __all__ = (
     "V2WatchlistList",
     "V2WatchlistStatus",
     "ValidateContractBody",
+    "VerificationDiagnostic",
+    "VerificationDiagnosticSeverity",
+    "VerificationExpectedInput",
+    "VerificationSource",
+    "VerificationSourceInput",
+    "VerificationSourceInputKind",
+    "VerificationSourceKind",
+    "VerificationToolchain",
     "WatchdogStats",
     "Watchlist",
     "WatchlistItem",

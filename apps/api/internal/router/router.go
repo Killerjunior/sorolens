@@ -157,6 +157,10 @@ func New(h *handler.Handler, maxBodyBytes int64) http.Handler {
 		// unambiguous against /contracts/{id}; it never writes.
 		r.With(scope).Post("/contracts/validate", h.ValidateContract)
 		r.With(scope, contributor, purgeContracts).Post("/contracts", h.RegisterContract)
+		// Bulk untrack/tag over a selection (#176). Like registration it mutates
+		// shared state, so it needs the same contributor role, and it purges both
+		// caches since it can untrack contracts and retag them.
+		r.With(scope, contributor, purgeContracts, purgeLabels).Post("/contracts/batch", h.BatchContracts)
 		r.With(scope, contributor, purgeLabels).Post("/labels", h.CreateLabel)
 		r.With(scope, cacheLabels).Get("/labels", h.ListLabels)
 		r.With(scope, cacheLabels).Get("/resolve", h.ResolveLabel)
@@ -177,6 +181,12 @@ func New(h *handler.Handler, maxBodyBytes int64) http.Handler {
 		get("/contracts/{id}/summary", h.ContractSummary)
 		get("/contracts/{id}/stream", h.StreamEvents)
 		get("/contracts/{id}/graph", h.ContractGraph)
+
+		// Source verification (issue #263). Submitting source mutates the
+		// verification record, so it requires at least contributor role;
+		// reading the cached verdict stays open.
+		r.With(scope, contributor).Post("/contracts/{id}/verify", h.VerifyContract)
+		get("/contracts/{id}/verification", h.GetContractVerification)
 		get("/contracts/{id}/wasm", h.GetContractWasm)
 		get("/contracts/{id}/spec", h.GetContractSpec)
 

@@ -355,7 +355,9 @@ Register a contract for tracking.
 List all tracked contracts.
 
 **Query params:** `network` (filter by network), `status` (filter by status),
-`tag` (show only contracts carrying this tag).
+`tag` (show only contracts carrying this tag), `sort` (sort column: `id`, `label`,
+`network`, `status`, or `added_at`; defaults to `id`), `dir` (`asc` or `desc`,
+default `asc`). Values outside those sets are rejected with `422`.
 
 **Response `200`:**
 ```json
@@ -373,6 +375,38 @@ List all tracked contracts.
   ]
 }
 ```
+
+---
+
+#### `POST /api/v1/contracts/batch`
+
+Apply one action to many contracts at once. Requires the `write:contracts`
+scope and at least the `contributor` role.
+
+**Request body:**
+```json
+{
+  "ids": ["CDLZFC3S...", "GABC..."],
+  "action": "untrack",
+  "args": {}
+}
+```
+
+| `action` | `args` | Effect |
+|---|---|---|
+| `untrack` | (none) | Permanently deletes the contracts together with every indexed row that references them: events, invocations, storage entries and history, sync state, upgrades, health scores, and performance baselines. Irreversible, so the dashboard confirms before sending. |
+| `tag` | `{ "label": "payments" }` | Sets `label` on each contract, replacing any existing alias. |
+
+A request may target at most 100 distinct IDs; unknown IDs are ignored
+rather than failing the whole batch.
+
+**Response `200`:**
+```json
+{ "action": "untrack", "requested": 2, "affected": 2 }
+```
+
+**Responses:** `200`, `401`, `403`, `415`, `422` (bad body, unknown action, blank
+label), `500`.
 
 ---
 

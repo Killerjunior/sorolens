@@ -1,6 +1,8 @@
 import type {
   AlertsResponse,
   AlertSubscription,
+  BatchContractsRequest,
+  BatchContractsResponse,
   ContractDetail,
   CompareResponse,
   ContractSnapshot,
@@ -32,6 +34,7 @@ import type {
   WatchlistResponse,
   WatchlistStatusResponse,
   HealthScoreResponse,
+  ContractVerification,
   LabelResolution,
 } from "./types";
 import { recordLastUpdated, resourceFromUrl } from "./lastUpdated";
@@ -110,6 +113,8 @@ export function listContracts(params?: {
   network?: string;
   status?: string;
   tag?: string;
+  sort?: string;
+  dir?: "asc" | "desc";
 }): Promise<ContractsListResponse> {
   const search = new URLSearchParams();
   if (params?.cursor) search.set("cursor", params.cursor);
@@ -117,6 +122,8 @@ export function listContracts(params?: {
   if (params?.network) search.set("network", params.network);
   if (params?.status) search.set("status", params.status);
   if (params?.tag) search.set("tag", params.tag);
+  if (params?.sort) search.set("sort", params.sort);
+  if (params?.dir) search.set("dir", params.dir);
   const qs = search.toString();
   return fetchJson<ContractsListResponse>(
     `${API_URL}/api/v1/contracts${qs ? "?" + qs : ""}`
@@ -136,6 +143,25 @@ export function trackContract(
     body: JSON.stringify(req),
     headers,
   });
+}
+
+// batchContracts applies one bulk action (untrack | tag) to many contracts.
+// Like trackContract it forwards the browser identity so the API's RBAC layer
+// can require the contributor role.
+export function batchContracts(
+  req: BatchContractsRequest,
+  userId?: string
+): Promise<BatchContractsResponse> {
+  const headers: Record<string, string> = {};
+  if (userId) headers["X-User-ID"] = userId;
+  return fetchJson<BatchContractsResponse>(
+    `${API_URL}/api/v1/contracts/batch`,
+    {
+      method: "POST",
+      body: JSON.stringify(req),
+      headers,
+    }
+  );
 }
 
 export function getContract(id: string): Promise<ContractDetail> {
@@ -385,6 +411,20 @@ export function getContractHealthScore(
 ): Promise<HealthScoreResponse> {
   return fetchJson<HealthScoreResponse>(
     `${API_URL}/api/v1/contracts/${id}/health-score`
+  );
+}
+
+// ---- source verification ---------------------------------------------------
+
+/**
+ * Fetch the cached source-verification verdict for a contract. Returns a 404
+ * ApiError when the contract has never been submitted for verification.
+ */
+export function getContractVerification(
+  id: string
+): Promise<ContractVerification> {
+  return fetchJson<ContractVerification>(
+    `${API_URL}/api/v1/contracts/${id}/verification`
   );
 }
 

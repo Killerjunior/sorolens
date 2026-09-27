@@ -12,35 +12,38 @@ import (
 
 // MockStore is an in-memory Store + QueryStore implementation for unit tests.
 type MockStore struct {
-	contracts          map[string]Contract
-	events             []Event
-	invocations        []Invocation
-	storageEntries     []StorageEntry
-	syncStates         map[string]SyncState
-	globalStats        GlobalStats
-	monitored          map[string]MonitoredContract
-	healthChecks       []HealthCheck
-	alerts             []ContractAlert
-	apiKeys            []APIKey
-	contractUpgrades   []ContractUpgrade
-	contractTags       map[string]map[string]bool
-	watchlist          map[string]map[string]bool
-	alertSubscriptions []AlertSubscription
-	users              map[string]User
-	healthScores       map[string]ContractHealthScore
-	wasmBinaries       map[string]ContractWasm
-	failedEvents       map[int64]FailedEvent
-	failedEventSeq     int64
-	indexerCursors     map[string]uint32
-	contractSpecs      map[string]ContractSpec
-	contractVersions   map[string][]ContractVersion
-	alertGroups        []AlertGroup
-	labels             []Label
+	contracts             map[string]Contract
+	events                []Event
+	invocations           []Invocation
+	storageEntries        []StorageEntry
+	syncStates            map[string]SyncState
+	globalStats           GlobalStats
+	monitored             map[string]MonitoredContract
+	healthChecks          []HealthCheck
+	alerts                []ContractAlert
+	apiKeys               []APIKey
+	contractUpgrades      []ContractUpgrade
+	contractTags          map[string]map[string]bool
+	watchlist             map[string]map[string]bool
+	alertSubscriptions    []AlertSubscription
+	users                 map[string]User
+	healthScores          map[string]ContractHealthScore
+	wasmBinaries          map[string]ContractWasm
+	contractSpecs         map[string]ContractSpec
+	failedEvents          map[int64]FailedEvent
+	failedEventSeq        int64
+	indexerCursors        map[string]uint32
+	contractVersions      map[string][]ContractVersion
+	contractVerifications map[string]ContractVerification
+	alertGroups           []AlertGroup
+	labels                []Label
 
 	// Error injection
 	UpsertContractErr           error
 	GetContractErr              error
 	ListContractsErr            error
+	DeleteContractsErr          error
+	SetContractLabelErr         error
 	GetGlobalStatsErr           error
 	SearchErr                   error
 	ListEventsErr               error
@@ -58,13 +61,18 @@ type MockStore struct {
 	RecordContractVersionErr    error
 	ListContractVersionsErr     error
 	GetLatestContractVersionErr error
-	UpsertContractSpecErr       error
-	GetContractSpecErr          error
-	GetWasmErr                  error
-	InsertFailedEventErr        error
-	ListFailedEventsErr         error
-	GetFailedEventErr           error
-	DeleteFailedEventErr        error
+
+	UpsertVerificationErr error
+	GetVerificationErr    error
+
+	UpsertContractSpecErr error
+	GetContractSpecErr    error
+	GetWasmErr            error
+
+	InsertFailedEventErr error
+	ListFailedEventsErr  error
+	GetFailedEventErr    error
+	DeleteFailedEventErr error
 }
 
 func (m *MockStore) UpsertLabel(_ context.Context, label Label) error {
@@ -109,18 +117,21 @@ func (m *MockStore) ResolveLabel(_ context.Context, workspaceID, query string) (
 // NewMockStore returns an initialized MockStore.
 func NewMockStore() *MockStore {
 	return &MockStore{
-		contracts:          make(map[string]Contract),
-		syncStates:         make(map[string]SyncState),
-		monitored:          make(map[string]MonitoredContract),
-		contractTags:       make(map[string]map[string]bool),
-		watchlist:          make(map[string]map[string]bool),
-		alerts:             make([]ContractAlert, 0),
-		alertSubscriptions: make([]AlertSubscription, 0),
-		users:              make(map[string]User),
-		wasmBinaries:       make(map[string]ContractWasm),
-		indexerCursors:     make(map[string]uint32),
-		contractSpecs:      make(map[string]ContractSpec),
-		contractVersions:   make(map[string][]ContractVersion),
+		contracts:             make(map[string]Contract),
+		syncStates:            make(map[string]SyncState),
+		monitored:             make(map[string]MonitoredContract),
+		contractTags:          make(map[string]map[string]bool),
+		watchlist:             make(map[string]map[string]bool),
+		alerts:                make([]ContractAlert, 0),
+		alertSubscriptions:    make([]AlertSubscription, 0),
+		users:                 make(map[string]User),
+		wasmBinaries:          make(map[string]ContractWasm),
+		failedEvents:          make(map[int64]FailedEvent),
+		labels:                make([]Label, 0),
+		indexerCursors:        make(map[string]uint32),
+		contractSpecs:         make(map[string]ContractSpec),
+		contractVerifications: make(map[string]ContractVerification),
+		contractVersions:      make(map[string][]ContractVersion),
 	}
 }
 
@@ -173,7 +184,30 @@ func (m *MockStore) ListContracts(_ context.Context, cursor string, limit int, f
 		c.Tags = m.tagsFor(c.ID)
 		out = append(out, c)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		var cmp int
+		switch f.Sort {
+		case "label":
+			cmp = strings.Compare(a.Label, b.Label)
+		case "network":
+			cmp = strings.Compare(a.Network, b.Network)
+		case "status":
+			cmp = strings.Compare(a.Status, b.Status)
+		case "added_at":
+			cmp = a.AddedAt.Compare(b.AddedAt)
+		default:
+			cmp = strings.Compare(a.ID, b.ID)
+		}
+		// The contract ID is the stable tie-breaker, mirroring the SQL.
+		if cmp == 0 {
+			cmp = strings.Compare(a.ID, b.ID)
+		}
+		if strings.EqualFold(f.SortDir, "desc") {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
 	var nextCursor string
 	if len(out) > limit {
 		nextCursor = out[limit-1].ID
@@ -191,6 +225,68 @@ func (m *MockStore) tagsFor(contractID string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// filterOut returns items with every element for which drop returns true
+// removed, reusing the backing array.
+func filterOut[T any](items []T, drop func(T) bool) []T {
+	out := items[:0]
+	for _, item := range items {
+		if !drop(item) {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func (m *MockStore) DeleteContracts(_ context.Context, ids []string) (int64, error) {
+	if m.DeleteContractsErr != nil {
+		return 0, m.DeleteContractsErr
+	}
+	removed := make(map[string]bool, len(ids))
+	var deleted int64
+	for _, id := range ids {
+		if _, ok := m.contracts[id]; !ok {
+			continue
+		}
+		delete(m.contracts, id)
+		removed[id] = true
+		deleted++
+	}
+	if deleted == 0 {
+		return 0, nil
+	}
+	// Mirror the postgres transaction: drop every row that referenced the
+	// untracked contracts.
+	m.events = filterOut(m.events, func(e Event) bool { return removed[e.ContractID] })
+	m.invocations = filterOut(m.invocations, func(i Invocation) bool { return removed[i.ContractID] })
+	m.storageEntries = filterOut(m.storageEntries, func(se StorageEntry) bool { return removed[se.ContractID] })
+	m.contractUpgrades = filterOut(m.contractUpgrades, func(u ContractUpgrade) bool { return removed[u.ContractID] })
+	for id := range removed {
+		delete(m.syncStates, id)
+		delete(m.healthScores, id)
+		for _, items := range m.watchlist {
+			delete(items, id)
+		}
+	}
+	return deleted, nil
+}
+
+func (m *MockStore) SetContractLabel(_ context.Context, ids []string, label string) (int64, error) {
+	if m.SetContractLabelErr != nil {
+		return 0, m.SetContractLabelErr
+	}
+	var updated int64
+	for _, id := range ids {
+		c, ok := m.contracts[id]
+		if !ok {
+			continue
+		}
+		c.Label = label
+		m.contracts[id] = c
+		updated++
+	}
+	return updated, nil
 }
 
 func (m *MockStore) BatchInsertEvents(_ context.Context, events []Event) error {
